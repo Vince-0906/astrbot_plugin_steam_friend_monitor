@@ -799,6 +799,7 @@ class SteamFriendMonitor(Star):
         if not self._is_authorized(event):
             yield event.plain_result("无权限执行该命令")
             return
+
         action = (action or "all").strip().lower()
         steam_ids = parse_ids(self.config.get("steam_ids", ""))
         targets = self._get_targets()
@@ -821,7 +822,6 @@ class SteamFriendMonitor(Star):
         image_path = None
         try:
             players = await self._fetch_players(steam_ids)
-            image_path = await self._render_status_image(players)
             status_text = chr(10).join(
                 [
                     f"{p.get('personaname', '?')}: {persona_text(int(p.get('personastate', 0)))}"
@@ -840,15 +840,14 @@ class SteamFriendMonitor(Star):
                 )
                 return
 
-            yield event.plain_result(
-                "[steam_monitor_test] 状态拉取成功，发送测试图片中..."
-            )
+            image_path = await self._render_status_image(players)
+
             chain = MessageChain()
             chain.chain = [
-                Comp.Plain(text="[steam_monitor_test] 这是测试推送图"),
+                Comp.Plain(text="[steam_monitor_test] 状态拉取成功，测试图如下"),
                 Comp.Image.fromFileSystem(image_path),
             ]
-            await self.context.send_message(event.unified_msg_origin, chain)
+            yield event.chain_result(chain)
 
             if action in ("push", "all"):
                 ok = 0
