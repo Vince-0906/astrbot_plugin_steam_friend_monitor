@@ -1,7 +1,11 @@
 import asyncio
+import contextlib
 import json
+import time
+from collections import OrderedDict
 from datetime import datetime
 from io import BytesIO
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import quote
@@ -108,8 +112,8 @@ class SteamFriendMonitor(Star):
         self._task: asyncio.Task | None = None
 
         self.http: httpx.AsyncClient | None = None
-        self.bytes_cache: Dict[str, bytes] = {}
-        self.icon_url_cache: Dict[str, str] = {}
+        self.bytes_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+        self.icon_url_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
 
     async def initialize(self):
         self.http = httpx.AsyncClient(timeout=15, follow_redirects=True)
@@ -120,6 +124,9 @@ class SteamFriendMonitor(Star):
         self._stop = True
         if self._task:
             self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
         if self.http:
             await self.http.aclose()
             self.http = None
@@ -135,15 +142,47 @@ class SteamFriendMonitor(Star):
             return {}
 
     def _save_state(self):
-        self.state_file.write_text(
+        tmp = self.state_file.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        tmp.replace(self.state_file)
 
     def _save_config_safe(self):
         try:
             self.config.save_config()
         except Exception as e:
             logger.warning(f"[steam-monitor] save config failed: {e}")
+
+    def _cache_ttl(self) -> int:
+        return max(60, int(self.config.get("cache_ttl_sec", 3600) or 3600))
+
+    def _cache_limit(self, kind: str) -> int:
+        if kind == "bytes":
+            return max(100, int(self.config.get("cache_max_bytes_items", 512) or 512))
+        return max(100, int(self.config.get("cache_max_icon_items", 1024) or 1024))
+
+    def _cache_get(self, cache: OrderedDict, key: str):
+        if key not in cache:
+            return None
+        ts, val = cache[key]
+        if time.time() - ts > self._cache_ttl():
+            cache.pop(key, None)
+            return None
+        cache.move_to_end(key)
+        return val
+
+    def _cache_set(self, cache: OrderedDict, key: str, val: Any, kind: str):
+        cache[key] = (time.time(), val)
+        cache.move_to_end(key)
+        while len(cache) > self._cache_limit(kind):
+            cache.popitem(last=False)
+
+    def _is_authorized(self, event: AstrMessageEvent) -> bool:
+        allow = parse_ids(self.config.get("admin_origins", ""))
+        if not allow:
+            return True
+        return event.unified_msg_origin in allow
 
     def _get_targets(self) -> List[str]:
         cfg_targets = parse_ids(self.config.get("push_targets", ""))
@@ -187,12 +226,19 @@ class SteamFriendMonitor(Star):
             return prefix % encoded
         return prefix + encoded
 
-    async def _fetch_url_bytes(self, url: str, proxy_prefix: str = "") -> bytes | None:
+    async def _fetch_url_bytes(
+        self,
+        url: str,
+        proxy_prefix: str = "",
+        allowed_types: tuple[str, ...] = ("image/", "application/json"),
+        max_bytes: int = 3 * 1024 * 1024,
+    ) -> bytes | None:
         if not url:
             return None
 
-        if url in self.bytes_cache:
-            return self.bytes_cache[url]
+        cached = self._cache_get(self.bytes_cache, url)
+        if cached is not None:
+            return cached
 
         if not self.http:
             self.http = httpx.AsyncClient(timeout=15, follow_redirects=True)
@@ -203,22 +249,53 @@ class SteamFriendMonitor(Star):
 
         for u in candidates:
             try:
-                resp = await self.http.get(u)
-                if resp.status_code == 200 and resp.content:
-                    self.bytes_cache[url] = resp.content
-                    return resp.content
+                async with self.http.stream("GET", u) as resp:
+                    if resp.status_code != 200:
+                        continue
+
+                    ctype = (resp.headers.get("content-type") or "").lower()
+                    if allowed_types and not any(
+                        ctype.startswith(x) for x in allowed_types
+                    ):
+                        continue
+
+                    clen = resp.headers.get("content-length")
+                    if clen:
+                        with contextlib.suppress(Exception):
+                            if int(clen) > max_bytes:
+                                continue
+
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes(65536):
+                        buf.extend(chunk)
+                        if len(buf) > max_bytes:
+                            buf = bytearray()
+                            break
+
+                    if not buf:
+                        continue
+
+                    raw = bytes(buf)
+                    self._cache_set(self.bytes_cache, url, raw, "bytes")
+                    return raw
             except Exception as e:
                 logger.debug(f"[steam-monitor] fetch image bytes failed: {u} err={e}")
+
         return None
 
     async def _get_game_icon_url(self, appid: str) -> str | None:
         if not appid:
             return None
-        if appid in self.icon_url_cache:
-            return self.icon_url_cache[appid]
+        cached = self._cache_get(self.icon_url_cache, appid)
+        if cached is not None:
+            return cached
 
         api = f"https://store.steampowered.com/api/appdetails?appids={appid}&l=schinese"
-        raw = await self._fetch_url_bytes(api)
+        raw = await self._fetch_url_bytes(
+            api,
+            allowed_types=("application/json", "text/json", "text/plain"),
+            max_bytes=512 * 1024,
+        )
         if not raw:
             return None
 
@@ -230,7 +307,7 @@ class SteamFriendMonitor(Star):
             app = node.get("data", {})
             icon_url = app.get("header_image") or app.get("capsule_image")
             if icon_url:
-                self.icon_url_cache[appid] = icon_url
+                self._cache_set(self.icon_url_cache, appid, icon_url, "icon")
             return icon_url
         except Exception as e:
             logger.warning(f"[steam-monitor] parse game icon failed appid={appid}: {e}")
@@ -243,7 +320,18 @@ class SteamFriendMonitor(Star):
         proxy_prefix: str = "",
         circle: bool = False,
     ) -> Image.Image | None:
-        raw = await self._fetch_url_bytes(url, proxy_prefix)
+        raw = await self._fetch_url_bytes(
+            url,
+            proxy_prefix=proxy_prefix,
+            allowed_types=("image/",),
+            max_bytes=max(
+                256 * 1024,
+                int(
+                    self.config.get("max_image_bytes", 3 * 1024 * 1024)
+                    or 3 * 1024 * 1024
+                ),
+            ),
+        )
         if not raw:
             return None
         try:
@@ -262,6 +350,8 @@ class SteamFriendMonitor(Star):
         proxy_prefix = self.config.get(
             "image_proxy_prefix", "https://images.weserv.nl/?url="
         )
+        concurrency = max(1, int(self.config.get("asset_concurrency", 6) or 6))
+        sem = asyncio.Semaphore(concurrency)
         out: Dict[str, Dict[str, Any]] = {}
 
         async def one_player(p: Dict[str, Any]):
@@ -269,24 +359,23 @@ class SteamFriendMonitor(Star):
             avatar_url = p.get("avatarfull") or p.get("avatarmedium") or p.get("avatar")
             gameid = str(p.get("gameid", "") or "").strip()
 
-            avatar_task = asyncio.create_task(
-                self._load_remote_image(
+            async with sem:
+                avatar = await self._load_remote_image(
                     avatar_url or "", (64, 64), proxy_prefix, circle=True
                 )
-            )
 
             game_icon = None
             if gameid:
                 icon_url = await self._get_game_icon_url(gameid)
                 if icon_url:
-                    game_icon = await self._load_remote_image(
-                        icon_url, (180, 68), proxy_prefix
-                    )
+                    async with sem:
+                        game_icon = await self._load_remote_image(
+                            icon_url, (180, 68), proxy_prefix
+                        )
 
-            avatar = await avatar_task
             out[sid] = {"avatar": avatar, "game_icon": game_icon}
 
-        await asyncio.gather(*(one_player(p) for p in players))
+        await asyncio.gather(*(one_player(p) for p in players), return_exceptions=False)
         return out
 
     def _build_status_image(
@@ -342,7 +431,10 @@ class SteamFriendMonitor(Star):
 
             y += row_h
 
-        out = self.data_dir / "steam_status_latest.png"
+        out = (
+            self.data_dir
+            / f"steam_status_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+        )
         img.save(out)
         return str(out)
 
@@ -381,6 +473,7 @@ class SteamFriendMonitor(Star):
     async def _poll_loop(self):
         await asyncio.sleep(3)
         while not self._stop:
+            image_path = None
             try:
                 steam_ids = parse_ids(self.config.get("steam_ids", ""))
                 default_interval = int(self.config.get("poll_interval_sec", 60) or 60)
@@ -390,11 +483,34 @@ class SteamFriendMonitor(Star):
                     continue
 
                 players = await self._fetch_players(steam_ids)
+                player_map = {str(p.get("steamid", "")): p for p in players}
 
                 events = []
                 now = now_iso()
-                for p in players:
-                    sid = p.get("steamid")
+                for sid in steam_ids:
+                    p = player_map.get(sid)
+                    if p is None:
+                        prev_record = self.state.get(sid, {})
+                        prev = prev_record.get("personastate")
+                        prev_game = (prev_record.get("gameextrainfo", "") or "").strip()
+                        self.state[sid] = {
+                            "personaname": prev_record.get("personaname", sid),
+                            "personastate": 0,
+                            "gameextrainfo": "",
+                            "offline_since": prev_record.get("offline_since", now),
+                            "ts": now,
+                            "missing": True,
+                        }
+                        if prev is not None and prev != 0:
+                            events.append(
+                                f"{prev_record.get('personaname', sid)}: 下线（接口未返回）"
+                            )
+                        elif prev is not None and prev_game:
+                            events.append(
+                                f"{prev_record.get('personaname', sid)}: 关闭游戏《{prev_game}》（接口未返回）"
+                            )
+                        continue
+
                     st = int(p.get("personastate", 0))
                     game = (p.get("gameextrainfo", "") or "").strip()
 
@@ -415,6 +531,7 @@ class SteamFriendMonitor(Star):
                         "gameextrainfo": game,
                         "offline_since": offline_since,
                         "ts": now,
+                        "missing": False,
                     }
 
                     if prev is None:
@@ -457,9 +574,17 @@ class SteamFriendMonitor(Star):
             except Exception as e:
                 logger.error(f"[steam-monitor] poll error: {e}")
                 await asyncio.sleep(30)
+            finally:
+                if image_path:
+                    with contextlib.suppress(Exception):
+                        Path(image_path).unlink(missing_ok=True)
 
     @filter.command("sfm_bind")
     async def bind_group(self, event: AstrMessageEvent):
+
+        if not self._is_authorized(event):
+            yield event.plain_result("无权限执行该命令")
+            return
         umo = event.unified_msg_origin
         targets = self._get_targets()
         if umo not in targets:
@@ -471,6 +596,10 @@ class SteamFriendMonitor(Star):
 
     @filter.command("sfm_unbind")
     async def unbind_group(self, event: AstrMessageEvent):
+
+        if not self._is_authorized(event):
+            yield event.plain_result("无权限执行该命令")
+            return
         umo = event.unified_msg_origin
         targets = self._get_targets()
         if umo in targets:
@@ -480,6 +609,10 @@ class SteamFriendMonitor(Star):
 
     @filter.command("sfm_targets")
     async def show_targets(self, event: AstrMessageEvent):
+
+        if not self._is_authorized(event):
+            yield event.plain_result("无权限执行该命令")
+            return
         targets = self._get_targets()
         if not targets:
             yield event.plain_result("当前无推送目标，请先 /sfm_bind")
@@ -488,6 +621,10 @@ class SteamFriendMonitor(Star):
 
     @filter.command("sfm_add_id")
     async def bind_id(self, event: AstrMessageEvent, steam_id64: str):
+
+        if not self._is_authorized(event):
+            yield event.plain_result("无权限执行该命令")
+            return
         steam_id64 = (steam_id64 or "").strip()
         if not steam_id64.isdigit() or len(steam_id64) < 10:
             yield event.plain_result("SteamID64 格式不正确")
@@ -504,6 +641,10 @@ class SteamFriendMonitor(Star):
 
     @filter.command("sfm_del_id")
     async def unbind_id(self, event: AstrMessageEvent, steam_id64: str):
+
+        if not self._is_authorized(event):
+            yield event.plain_result("无权限执行该命令")
+            return
         steam_id64 = (steam_id64 or "").strip()
         ids = parse_ids(self.config.get("steam_ids", ""))
         if steam_id64 in ids:
@@ -516,6 +657,10 @@ class SteamFriendMonitor(Star):
 
     @filter.command("sfm_set_ids")
     async def set_ids(self, event: AstrMessageEvent, ids: str):
+
+        if not self._is_authorized(event):
+            yield event.plain_result("无权限执行该命令")
+            return
         parsed = parse_ids(ids)
         self.config["steam_ids"] = ",".join(parsed)
         self._save_config_safe()
@@ -528,19 +673,25 @@ class SteamFriendMonitor(Star):
             yield event.plain_result("未配置 steam_ids")
             return
 
-        players = await self._fetch_players(steam_ids)
-        image_path = await self._render_status_image(players)
-        msg = chr(10).join(
-            [
-                f"{p.get('personaname', '?')}: {persona_text(int(p.get('personastate', 0)))}"
-                for p in players
-            ]
-        )
+        image_path = None
+        try:
+            players = await self._fetch_players(steam_ids)
+            image_path = await self._render_status_image(players)
+            msg = chr(10).join(
+                [
+                    f"{p.get('personaname', '?')}: {persona_text(int(p.get('personastate', 0)))}"
+                    for p in players
+                ]
+            )
 
-        yield event.plain_result("当前状态：" + chr(10) + msg)
-        chain = MessageChain()
-        chain.chain = [Comp.Image.fromFileSystem(image_path)]
-        await self.context.send_message(event.unified_msg_origin, chain)
+            yield event.plain_result("当前状态：" + chr(10) + msg)
+            chain = MessageChain()
+            chain.chain = [Comp.Image.fromFileSystem(image_path)]
+            await self.context.send_message(event.unified_msg_origin, chain)
+        finally:
+            if image_path:
+                with contextlib.suppress(Exception):
+                    Path(image_path).unlink(missing_ok=True)
 
     @filter.command("sfm_test")
     async def steam_monitor_test(self, event: AstrMessageEvent, action: str = "all"):
@@ -563,6 +714,7 @@ class SteamFriendMonitor(Star):
             yield event.plain_result("[steam_monitor_test] 未配置 steam_ids")
             return
 
+        image_path = None
         try:
             players = await self._fetch_players(steam_ids)
             image_path = await self._render_status_image(players)
@@ -610,3 +762,7 @@ class SteamFriendMonitor(Star):
                     )
         except Exception as e:
             yield event.plain_result(f"[steam_monitor_test] 执行失败: {e}")
+        finally:
+            if image_path:
+                with contextlib.suppress(Exception):
+                    Path(image_path).unlink(missing_ok=True)
