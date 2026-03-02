@@ -86,7 +86,14 @@ def safe_font(size: int, plugin_dir: Path | None = None):
         except Exception as e:
             logger.warning(f"[steam-monitor] load system font failed: {e}")
 
+    logger.warning(
+        "[steam-monitor] no CJK font found; fallback font may render Chinese as squares"
+    )
     return ImageFont.load_default()
+
+
+def _dedup_keep_order(items):
+    return list(dict.fromkeys(x for x in items if x))
 
 
 def circle_crop(img: Image.Image) -> Image.Image:
@@ -193,17 +200,10 @@ class SteamFriendMonitor(Star):
     def _get_targets(self) -> List[str]:
         cfg_targets = parse_ids(self.config.get("push_targets", ""))
         legacy_targets = self.state.get("_push_targets", [])
-        merged = []
-        for t in cfg_targets + legacy_targets:
-            if t and t not in merged:
-                merged.append(t)
-        return merged
+        return _dedup_keep_order(cfg_targets + legacy_targets)
 
     def _set_targets(self, targets: List[str]):
-        uniq = []
-        for t in targets:
-            if t and t not in uniq:
-                uniq.append(t)
+        uniq = _dedup_keep_order(targets)
         self.config["push_targets"] = ",".join(uniq)
         self._save_config_safe()
 
@@ -215,10 +215,7 @@ class SteamFriendMonitor(Star):
         if not self.http:
             self.http = httpx.AsyncClient(timeout=15, follow_redirects=True)
 
-        uniq_ids = []
-        for sid in steam_ids:
-            if sid and sid not in uniq_ids:
-                uniq_ids.append(sid)
+        uniq_ids = _dedup_keep_order(steam_ids)
 
         batch_size = min(
             100, max(1, int(self.config.get("steam_batch_size", 100) or 100))
@@ -565,14 +562,11 @@ class SteamFriendMonitor(Star):
 
     def _compute_next_interval(self, steam_ids: List[str], default_sec: int) -> int:
         # 基于完整监控集合（配置 ID + state）计算，而不是仅 API 返回列表
-        all_ids = []
-        for sid in steam_ids + list(self.state.keys()):
-            if not sid:
-                continue
-            if isinstance(sid, str) and sid.startswith("_"):
-                continue
-            if sid not in all_ids:
-                all_ids.append(sid)
+        all_ids = _dedup_keep_order(
+            sid
+            for sid in (steam_ids + list(self.state.keys()))
+            if not (isinstance(sid, str) and sid.startswith("_"))
+        )
 
         any_online = False
         offline_minutes_max = 0.0
