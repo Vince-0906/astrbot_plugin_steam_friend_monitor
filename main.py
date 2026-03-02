@@ -435,8 +435,11 @@ class SteamFriendMonitor(Star):
             self.data_dir
             / f"steam_status_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
         )
-        img.save(out)
-        return str(out)
+        try:
+            img.save(out)
+            return str(out)
+        finally:
+            img.close()
 
     async def _render_status_image(self, players: List[Dict[str, Any]]) -> str:
         assets = await self._prepare_assets(players)
@@ -573,7 +576,15 @@ class SteamFriendMonitor(Star):
                 break
             except Exception as e:
                 logger.error(f"[steam-monitor] poll error: {e}")
-                await asyncio.sleep(30)
+                if "steam_api_key" in str(e):
+                    await asyncio.sleep(
+                        max(
+                            300,
+                            int(self.config.get("missing_key_sleep_sec", 600) or 600),
+                        )
+                    )
+                else:
+                    await asyncio.sleep(30)
             finally:
                 if image_path:
                     with contextlib.suppress(Exception):
@@ -684,10 +695,12 @@ class SteamFriendMonitor(Star):
                 ]
             )
 
-            yield event.plain_result("当前状态：" + chr(10) + msg)
             chain = MessageChain()
-            chain.chain = [Comp.Image.fromFileSystem(image_path)]
-            await self.context.send_message(event.unified_msg_origin, chain)
+            chain.chain = [
+                Comp.Plain(text="当前状态：" + chr(10) + msg),
+                Comp.Image.fromFileSystem(image_path),
+            ]
+            yield event.chain_result(chain)
         finally:
             if image_path:
                 with contextlib.suppress(Exception):
