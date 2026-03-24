@@ -1,0 +1,6 @@
+name: astrbot_plugin_steam_friend_monitor
+display_name: Steam 好友在线监控
+desc: 轮询 Steam 好友状态，在上线、下线、状态变化或游戏变化时生成图片并推送到绑定会话。
+version: 0.2.0
+author: SZC
+repo: https://github.com/SZC/astrbot_plugin_steam_friend_monitor
