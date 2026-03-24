@@ -1,6 +1,4 @@
 # astrbot_plugin_steam_friend_monitor
-﻿# astrbot_plugin_steam_friend_monitor
-
 Steam 好友在线监控插件（AstrBot）。
 
 ## 功能
@@ -78,8 +76,6 @@ Steam 好友在线监控插件（AstrBot）。
 ## 版本
 
 当前版本：`0.2.0`
-=======
-当前版本：`0.1.0`
 
 
 
