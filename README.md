@@ -1,6 +1,4 @@
-<<<<<<< HEAD
 # astrbot_plugin_steam_friend_monitor
-=======
 ﻿# astrbot_plugin_steam_friend_monitor
 
 Steam 好友在线监控插件（AstrBot）。
