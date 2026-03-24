@@ -6,11 +6,16 @@
     "obvious_hint": true
   },
   "steam_ids": {
+<<<<<<< HEAD
     "description": "要监控的 SteamID64 列表，使用英文逗号分隔",
+=======
+    "description": "要监控的 SteamID64（英文逗号分隔）",
+>>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
     "type": "string",
     "default": ""
   },
   "push_targets": {
+<<<<<<< HEAD
     "description": "推送目标会话 ID（unified_msg_origin），使用英文逗号分隔",
     "type": "text",
     "default": "",
@@ -18,18 +23,40 @@
   },
   "poll_interval_sec": {
     "description": "基础轮询间隔，单位秒",
+=======
+    "description": "推送目标会话ID（unified_msg_origin，英文逗号分隔）",
+    "type": "text",
+    "default": "",
+    "hint": "可在群里执行 /steam_monitor_bind 自动写入，或在此手动维护"
+  },
+  "poll_interval_sec": {
+    "description": "基础轮询间隔（秒）",
+>>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
     "type": "int",
     "default": 60
   },
   "online_only": {
+<<<<<<< HEAD
     "description": "仅推送离线 -> 在线事件；关闭后也会推送下线、状态变化和游戏变化",
+=======
+    "description": "仅在离线->在线时推送（true）",
+>>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
     "type": "bool",
     "default": true
   },
   "image_proxy_prefix": {
+<<<<<<< HEAD
     "description": "头像和游戏封面图片的代理前缀",
     "type": "string",
     "default": "https://images.weserv.nl/?url=",
     "hint": "留空表示直连；支持 {url} 或 %s 占位，例如 https://images.weserv.nl/?url= 或 https://your-proxy/fetch?url={url}"
   }
 }
+=======
+    "description": "图片中转前缀（用于头像/游戏图标）",
+    "type": "string",
+    "default": "https://images.weserv.nl/?url=",
+    "hint": "留空为直连；可用 {url} 或 %s 占位，例如 https://images.weserv.nl/?url= 或 https://your-proxy/fetch?url={url}"
+  }
+}
+>>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
