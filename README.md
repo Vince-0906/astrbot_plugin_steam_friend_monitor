@@ -2,7 +2,6 @@
 # astrbot_plugin_steam_friend_monitor
 =======
 ﻿# astrbot_plugin_steam_friend_monitor
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
 
 Steam 好友在线监控插件（AstrBot）。
 
@@ -15,12 +14,10 @@ Steam 好友在线监控插件（AstrBot）。
 - 生成带头像和游戏封面的状态图片，并自动清理旧渲染缓存
 - 支持手动查询状态图和推送链路测试
 - 内置中文字体，容器环境缺少系统字体时也能正常显示
-=======
 - 轮询 Steam 玩家状态（在线/离线/忙碌/离开等）
 - 玩家上线、下线、启动游戏、关闭游戏、切换游戏时自动推送图片到已绑定会话
 - 支持手动查询当前状态图
 - 内置中文字体，容器里不装系统字体也能正常显示中文
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
 
 ## 安装
 
@@ -29,29 +26,24 @@ Steam 好友在线监控插件（AstrBot）。
 2. 安装后进入插件配置，至少填写：
    - `steam_api_key`
    - `steam_ids`
-=======
 2. 安装后进入插件配置，填写：
    - `steam_api_key`
    - `steam_ids`（英文逗号分隔的 SteamID64）
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
 3. 在目标会话发送 `/sfm_bind` 绑定推送目标。
 
 ## 配置项
 
 - `steam_api_key`：Steam Web API Key
-<<<<<<< HEAD
 - `steam_ids`：监控的 SteamID64 列表，英文逗号分隔
 - `push_targets`：推送目标会话 ID，可由 `/sfm_bind` 自动维护
 - `poll_interval_sec`：基础轮询间隔，最小 10 秒
 - `online_only`：仅推送离线 -> 在线事件；关闭后也会推送更多变化事件
 - `image_proxy_prefix`：头像和游戏封面的图片代理前缀
-=======
 - `steam_ids`：监控 SteamID64 列表（逗号分隔）
 - `push_targets`：推送目标会话 ID（可由 `/sfm_bind` 自动写入）
 - `poll_interval_sec`：基础轮询间隔（秒）
 - `online_only`：仅在离线 -> 在线时推送
 - `image_proxy_prefix`：图片中转前缀（头像/游戏图标），默认 `https://images.weserv.nl/?url=`
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
 
 ## 命令
 
@@ -62,7 +54,6 @@ Steam 好友在线监控插件（AstrBot）。
 - `/sfm_del_id <steamid64>`：删除监控 ID
 - `/sfm_set_ids <id1,id2,...>`：批量设置监控 ID
 - `/sfm_status`：立即查询并发送当前状态图
-<<<<<<< HEAD
 - `/sfm_test [all|cfg|status|image|push]`：测试配置、状态拉取和推送链路
 
 ## 运行特点
@@ -77,21 +68,12 @@ Steam 好友在线监控插件（AstrBot）。
 - `/sfm_test [all|cfg|status|push]`：测试命令
 
 ## 中文字体说明
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
 
 插件默认优先加载内置字体：
 
 - `fonts/NotoSansCJKsc-Regular.otf`
 
-<<<<<<< HEAD
 若内置字体不可用，会自动回退到 Windows、Linux 或 macOS 的常见 CJK 字体，最后再回退到 PIL 默认字体。
-
-## 开发文档
-
-开发说明见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
-=======
-若内置字体不可用，会自动回退系统字体（Windows/Linux/macOS 常见 CJK 字体），最后再回退 PIL 默认字体。
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
 
 ## 依赖
 
@@ -115,5 +97,3 @@ Steam 好友在线监控插件（AstrBot）。
 - 顶部不再显示“Steam 好友状态监控”标题
 
 
-
->>>>>>> cc237a9798bbf38a9c18ff3e68180ff08d5da0a6
